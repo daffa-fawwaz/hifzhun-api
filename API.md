@@ -2,6 +2,36 @@
 
 Base URL: `/api/v1`
 
+## Buku dalam Kelas (Khusus Guru)
+
+### Buat Buku Langsung di Kelas
+
+**POST** `/classes/{class_id}/books/create`
+
+Hanya guru pemilik kelas yang dapat menggunakan endpoint ini, dan kelas harus memiliki `type: "book"`. Buku dibuat sebagai draft dan langsung ditautkan ke kelas. Karena itu seluruh siswa yang tergabung di kelas dapat melihat buku, modul, dan itemnya melalui endpoint kelas/buku yang ada.
+
+Gunakan `multipart/form-data`. Field `cover_image` wajib berupa file PNG, JPG, JPEG, atau WEBP dengan ukuran maksimal 3 MB. File diunggah ke Supabase Storage menggunakan `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (atau `SUPABASE_ANON_KEY`), dan `SUPABASE_BUCKET`; URL publik Supabase otomatis disimpan sebagai `cover_image` pada buku.
+
+| Field | Tipe | Wajib | Keterangan |
+| --- | --- | --- | --- |
+| `title` | text | Ya | Judul buku |
+| `description` | text | Tidak | Deskripsi buku |
+| `order` | number | Tidak | Urutan buku di kelas |
+| `cover_image` | file | Ya | Berkas cover buku |
+
+Contoh:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/classes/$CLASS_ID/books/create" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "title=Modul Tajwid Dasar" \
+  -F "description=Materi untuk kelas tajwid" \
+  -F "order=1" \
+  -F "cover_image=@/path/ke/cover.jpg"
+```
+
+Setelah buku dibuat, guru mengelola modul dan item menggunakan endpoint biasa berikut dengan `book_id` dari respons: `POST /books/{book_id}/modules`, `POST /books/{book_id}/items`, dan `POST /books/modules/{module_id}/items`.
+
 ## Authentication
 
 ### Register

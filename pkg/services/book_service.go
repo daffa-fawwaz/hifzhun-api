@@ -1295,11 +1295,7 @@ func (s *bookService) StartItemMemorization(userID uuid.UUID, bookID, bookItemID
 			return nil, err
 		}
 		if isClassBook {
-			allowed, err := s.classBookRepo.IsBookAccessibleByMember(bookID, userID.String())
-			if err != nil {
-				return nil, err
-			}
-			if !allowed {
+			if !s.canAccessClassBook(bookID, book.OwnerID, &userID) {
 				return nil, errors.New("you don't have access to this book")
 			}
 		}

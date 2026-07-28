@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 
 	"hifzhun-api/pkg/utils"
@@ -14,6 +16,7 @@ type coverImagePayload struct {
 	Description string `json:"description" form:"description"`
 	Type        string `json:"type" form:"type"`
 	CoverImage  string `json:"cover_image" form:"cover_image"`
+	Order       int    `json:"order" form:"order"`
 }
 
 func parseCoverImagePayload(c *fiber.Ctx, payload *coverImagePayload) error {
@@ -26,6 +29,13 @@ func parseCoverImagePayload(c *fiber.Ctx, payload *coverImagePayload) error {
 	payload.Description = c.FormValue("description")
 	payload.Type = c.FormValue("type")
 	payload.CoverImage = c.FormValue("cover_image")
+	if order := c.FormValue("order"); order != "" {
+		parsedOrder, err := strconv.Atoi(order)
+		if err != nil {
+			return errors.New("order must be a number")
+		}
+		payload.Order = parsedOrder
+	}
 
 	coverImage, err := uploadOptionalCoverImage(c)
 	if err != nil {
