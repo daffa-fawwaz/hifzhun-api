@@ -159,6 +159,46 @@ func (h *ClassHandler) DeleteClass(c *fiber.Ctx) error {
 	return utils.Success(c, fiber.StatusOK, "class deleted successfully", nil, nil)
 }
 
+// CreateBookInClass godoc
+// @Summary Create a book in a class
+// @Description Create a draft book directly in a book-type class. The book is automatically assigned to the class, so every current and future student in the class can access its modules and items. Module and item management uses the regular book endpoints.
+// @Tags Class
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Class ID"
+// @Param title formData string true "Book title"
+// @Param description formData string false "Book description"
+// @Param order formData int false "Book order in the class"
+// @Param cover_image formData file true "Cover image file (png, jpg, jpeg, webp; max 3MB)"
+// @Success 201 {object} utils.SuccessResponse{data=entities.ClassBook}
+// @Failure 400 {object} utils.ErrorResponse
+// @Failure 403 {object} utils.ErrorResponse
+// @Router /classes/{id}/books/create [post]
+func (h *ClassHandler) CreateBookInClass(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	classID := c.Params("id")
+
+	if !isMultipartForm(c) {
+		return utils.Error(c, fiber.StatusBadRequest, "content type must be multipart/form-data", "BAD_REQUEST", nil)
+	}
+	if _, err := c.FormFile("cover_image"); err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, "cover_image file is required", "BAD_REQUEST", nil)
+	}
+
+	var req coverImagePayload
+	if err := parseCoverImagePayload(c, &req); err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, err.Error(), "BAD_REQUEST", nil)
+	}
+
+	classBook, err := h.classSvc.CreateBookInClass(classID, userID, req.Title, req.Description, req.CoverImage, req.Order)
+	if err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, err.Error(), "CREATE_CLASS_BOOK_FAILED", nil)
+	}
+
+	return utils.Success(c, fiber.StatusCreated, "book created in class successfully", classBook, nil)
+}
+
 // AddBookToClass godoc
 // @Summary Add book to class
 // @Description Add a book to book-type class (teacher only)

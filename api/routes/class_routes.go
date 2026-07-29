@@ -38,6 +38,7 @@ func RegisterClassRoutes(
 	teacher.Delete("/:id", classHandler.DeleteClass)
 
 	// Class books management (Teacher only)
+	teacher.Post("/:id/books/create", classHandler.CreateBookInClass)
 	teacher.Post("/:id/books", classHandler.AddBookToClass)
 	teacher.Delete("/:id/books/:book_id", classHandler.RemoveBookFromClass)
 

@@ -21,6 +21,7 @@ type ClassService interface {
 	GetClassDetail(classID string, userID uuid.UUID) (*entities.Class, error)
 	UpdateClass(classID string, teacherID uuid.UUID, name, description, coverImage string, isActive *bool) (*entities.Class, error)
 	DeleteClass(classID string, teacherID uuid.UUID) error
+	CreateBookInClass(classID string, teacherID uuid.UUID, title, description, coverImage string, order int) (*entities.ClassBook, error)
 	AddBookToClass(classID string, teacherID uuid.UUID, bookID string, order int) (*entities.ClassBook, error)
 	RemoveBookFromClass(classID string, teacherID uuid.UUID, bookID string) error
 	GetStudentProgress(classID string, teacherID uuid.UUID) ([]StudentProgress, error)
@@ -450,6 +451,53 @@ func (s *classService) AddBookToClass(classID string, teacherID uuid.UUID, bookI
 	}
 
 	// Reload with Book relation
+	return s.classBookRepo.FindByID(classBook.ID.String())
+}
+
+// CreateBookInClass creates a draft book owned by the class teacher and assigns it
+// to the class immediately. Modules and items are managed through the regular book
+// endpoints, so their validation and structure stay identical to personal books.
+func (s *classService) CreateBookInClass(classID string, teacherID uuid.UUID, title, description, coverImage string, order int) (*entities.ClassBook, error) {
+	class, err := s.classRepo.FindByID(classID)
+	if err != nil {
+		return nil, errors.New("class not found")
+	}
+
+	if class.GuruID != teacherID {
+		return nil, errors.New("you don't have permission to create a book in this class")
+	}
+
+	if class.Type != entities.ClassTypeBook {
+		return nil, errors.New("can only create books in book-type classes")
+	}
+
+	if title == "" {
+		return nil, errors.New("book title is required")
+	}
+
+	book := &entities.Book{
+		OwnerID:     teacherID,
+		Title:       title,
+		Description: description,
+		CoverImage:  coverImage,
+		Status:      entities.BookStatusDraft,
+	}
+	if err := s.bookRepo.Create(book); err != nil {
+		return nil, err
+	}
+
+	classBook := &entities.ClassBook{
+		ClassID: class.ID,
+		BookID:  book.ID,
+		Order:   order,
+	}
+	if err := s.classBookRepo.Create(classBook); err != nil {
+		// The book has no modules or items yet. Remove it so a failed request does
+		// not leave an inaccessible personal draft behind.
+		_ = s.bookRepo.Delete(book.ID.String())
+		return nil, err
+	}
+
 	return s.classBookRepo.FindByID(classBook.ID.String())
 }
 
