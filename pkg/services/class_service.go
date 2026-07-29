@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
+	"strings"
 	"time"
 
 	"hifzhun-api/pkg/config"
@@ -25,6 +27,7 @@ type ClassService interface {
 	AddBookToClass(classID string, teacherID uuid.UUID, bookID string, order int) (*entities.ClassBook, error)
 	RemoveBookFromClass(classID string, teacherID uuid.UUID, bookID string) error
 	GetStudentProgress(classID string, teacherID uuid.UUID) ([]StudentProgress, error)
+	GetClassBookStudentProgress(classID, bookID string, teacherID uuid.UUID) (*ClassBookStudentProgress, error)
 	GetPendingGraduations(classID string, teacherID uuid.UUID) ([]PendingGraduation, error)
 	ApproveGraduation(classID string, teacherID uuid.UUID, itemID string) error
 	RejectGraduation(classID string, teacherID uuid.UUID, itemID string) error
@@ -87,6 +90,50 @@ type StudentProgress struct {
 	ProgressPct float64 `json:"progress_pct" example:"16.67"`
 	// Detailed list of all hafalan items with their current status
 	Items []ItemDetail `json:"items"`
+}
+
+// ClassBookStudentProgress is a teacher-facing progress report for one book in a class.
+// AverageStability is the total valid stability across a student's items divided by
+// every item defined in the book. Items a student has not started contribute zero.
+type ClassBookStudentProgress struct {
+	ClassID        uuid.UUID             `json:"class_id"`
+	BookID         uuid.UUID             `json:"book_id"`
+	BookTitle      string                `json:"book_title"`
+	TotalBookItems int                   `json:"total_book_items"`
+	Students       []StudentBookProgress `json:"students"`
+}
+
+type StudentBookProgress struct {
+	UserID          uuid.UUID `json:"user_id"`
+	Email           string    `json:"email"`
+	FullName        string    `json:"full_name"`
+	TotalItems      int       `json:"total_items"`
+	Start           int       `json:"start"`
+	Menghafal       int       `json:"menghafal"`
+	Interval        int       `json:"interval"`
+	FSRSActive      int       `json:"fsrs_active"`
+	PendingGraduate int       `json:"pending_graduate"`
+	Graduate        int       `json:"graduate"`
+	Inactive        int       `json:"inactive"`
+	// AverageStability divides total review-interval days by every item in the
+	// book. Unstarted items contribute zero, making it a completion-aware value.
+	AverageStability        float64                   `json:"average_stability"`
+	AverageStartedStability float64                   `json:"average_started_stability"`
+	Items                   []StudentBookItemProgress `json:"items"`
+}
+
+type StudentBookItemProgress struct {
+	ItemID     uuid.UUID `json:"item_id"`
+	BookItemID uuid.UUID `json:"book_item_id"`
+	Title      string    `json:"title"`
+	Status     string    `json:"status"`
+	// Stability remains the existing formatted review interval for compatibility.
+	Stability          string     `json:"stability"`
+	ReviewIntervalDays *float64   `json:"review_interval_days,omitempty"`
+	FSRSStabilityDays  float64    `json:"fsrs_stability_days"`
+	ReviewCount        int        `json:"review_count"`
+	LastReviewAt       *time.Time `json:"last_review_at,omitempty"`
+	NextReviewAt       *time.Time `json:"next_review_at,omitempty"`
 }
 
 // MemberInfo represents basic information about a class member
@@ -161,6 +208,21 @@ func calculateItemStability(item *entities.Item) string {
 	}
 
 	return "item belum masuk ujian"
+}
+
+func itemStabilityDays(item *entities.Item) (float64, bool) {
+	if item == nil || item.NextReviewAt == nil || item.LastReviewAt == nil {
+		return 0, false
+	}
+
+	loc := item.NextReviewAt.Location()
+	last := time.Date(item.LastReviewAt.Year(), item.LastReviewAt.Month(), item.LastReviewAt.Day(), 0, 0, 0, 0, loc)
+	next := time.Date(item.NextReviewAt.Year(), item.NextReviewAt.Month(), item.NextReviewAt.Day(), 0, 0, 0, 0, loc)
+	days := next.Sub(last).Hours() / 24
+	if days < 0 {
+		return 0, false
+	}
+	return days, true
 }
 
 func itemBelongsToClassBooks(item entities.Item, classBooks []entities.ClassBook) bool {
@@ -618,6 +680,137 @@ func (s *classService) GetStudentProgress(classID string, teacherID uuid.UUID) (
 	}
 
 	return progressList, nil
+}
+
+// GetClassBookStudentProgress returns progress for every student in one book.
+// It deliberately scopes the report to a single class-book relation so a book
+// assigned to another class cannot be queried through this class.
+func (s *classService) GetClassBookStudentProgress(classID, bookID string, teacherID uuid.UUID) (*ClassBookStudentProgress, error) {
+	class, err := s.classRepo.FindByID(classID)
+	if err != nil {
+		return nil, errors.New("class not found")
+	}
+	if class.GuruID != teacherID {
+		return nil, errors.New("you don't have permission to view this class progress")
+	}
+	if class.Type != entities.ClassTypeBook {
+		return nil, errors.New("this progress endpoint is only available for book-type classes")
+	}
+	if _, err := s.classBookRepo.FindByClassAndBook(classID, bookID); err != nil {
+		return nil, errors.New("book is not assigned to this class")
+	}
+
+	book, err := s.bookRepo.FindByIDWithRelations(bookID)
+	if err != nil {
+		return nil, errors.New("book not found")
+	}
+
+	bookItems := make(map[uuid.UUID]entities.BookItem)
+	for _, item := range book.Items {
+		bookItems[item.ID] = item
+	}
+	for _, module := range book.Modules {
+		for _, item := range module.Items {
+			bookItems[item.ID] = item
+		}
+	}
+
+	members, err := s.classMemberRepo.FindByClassID(classID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ClassBookStudentProgress{
+		ClassID:        class.ID,
+		BookID:         book.ID,
+		BookTitle:      book.Title,
+		TotalBookItems: len(bookItems),
+		Students:       make([]StudentBookProgress, 0, len(members)),
+	}
+
+	for _, member := range members {
+		user, err := s.userRepo.FindByID(member.UserID.String())
+		if err != nil {
+			continue
+		}
+
+		items, err := s.itemRepo.FindByOwnerAndBookIDs(member.UserID, []string{bookID})
+		if err != nil {
+			return nil, err
+		}
+
+		student := StudentBookProgress{
+			UserID:   member.UserID,
+			Email:    user.Email,
+			FullName: user.FullName,
+			Items:    make([]StudentBookItemProgress, 0, len(items)),
+		}
+		stabilityTotal := 0.0
+		startedStabilityCount := 0
+
+		for _, item := range items {
+			_, bookItemID, ok := strings.Cut(item.ContentRef, "book:"+bookID+":item:")
+			if !ok {
+				continue
+			}
+			parsedBookItemID, err := uuid.Parse(bookItemID)
+			if err != nil {
+				continue
+			}
+			bookItem, exists := bookItems[parsedBookItemID]
+			if !exists {
+				continue
+			}
+
+			student.TotalItems++
+			switch item.Status {
+			case entities.ItemStatusStart:
+				student.Start++
+			case entities.ItemStatusMenghafal:
+				student.Menghafal++
+			case entities.ItemStatusInterval:
+				student.Interval++
+			case entities.ItemStatusFSRSActive:
+				student.FSRSActive++
+			case entities.ItemStatusPendingGraduate:
+				student.PendingGraduate++
+			case entities.ItemStatusGraduate:
+				student.Graduate++
+			case entities.ItemStatusInactive:
+				student.Inactive++
+			}
+
+			stability := calculateItemStability(&item)
+			var reviewIntervalDays *float64
+			if days, valid := itemStabilityDays(&item); valid {
+				stabilityTotal += days
+				startedStabilityCount++
+				reviewIntervalDays = &days
+			}
+			student.Items = append(student.Items, StudentBookItemProgress{
+				ItemID:             item.ID,
+				BookItemID:         bookItem.ID,
+				Title:              bookItem.Title,
+				Status:             item.Status,
+				Stability:          stability,
+				ReviewIntervalDays: reviewIntervalDays,
+				FSRSStabilityDays:  item.Stability,
+				ReviewCount:        item.ReviewCount,
+				LastReviewAt:       item.LastReviewAt,
+				NextReviewAt:       item.NextReviewAt,
+			})
+		}
+
+		if result.TotalBookItems > 0 {
+			student.AverageStability = math.Round((stabilityTotal/float64(result.TotalBookItems))*100) / 100
+		}
+		if startedStabilityCount > 0 {
+			student.AverageStartedStability = math.Round((stabilityTotal/float64(startedStabilityCount))*100) / 100
+		}
+		result.Students = append(result.Students, student)
+	}
+
+	return result, nil
 }
 
 // ==================== STUDENT METHODS ====================

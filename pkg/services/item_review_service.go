@@ -31,6 +31,7 @@ type ItemReviewService struct {
 	classMemberRepo     repositories.ClassMemberRepository
 	classRepo           repositories.ClassRepository
 	classBookRepo       repositories.ClassBookRepository
+	juzItemRepo         *repositories.JuzItemRepository
 }
 
 func NewItemReviewService(
@@ -40,6 +41,7 @@ func NewItemReviewService(
 	classMemberRepo repositories.ClassMemberRepository,
 	classRepo repositories.ClassRepository,
 	classBookRepo repositories.ClassBookRepository,
+	juzItemRepo *repositories.JuzItemRepository,
 ) *ItemReviewService {
 	return &ItemReviewService{
 		itemRepo:            itemRepo,
@@ -48,27 +50,30 @@ func NewItemReviewService(
 		classMemberRepo:     classMemberRepo,
 		classRepo:           classRepo,
 		classBookRepo:       classBookRepo,
+		juzItemRepo:         juzItemRepo,
 	}
 }
 
-// isUserInQuranClass checks if user has joined any active Quran class
-func (s *ItemReviewService) isUserInQuranClass(userID uuid.UUID) bool {
-	classes, err := s.classMemberRepo.FindByUserID(userID.String())
-	if err != nil || len(classes) == 0 {
+// isItemInActiveQuranClass only returns true for an item created in a specific,
+// active Quran class where the owner is still a member.
+func (s *ItemReviewService) isItemInActiveQuranClass(item *entities.Item, userID uuid.UUID) bool {
+	if item == nil || item.SourceType != "quran" || s.juzItemRepo == nil {
 		return false
 	}
-
-	// Check if any of the classes is a Quran-type class
-	for _, membership := range classes {
-		class, err := s.classRepo.FindByID(membership.ClassID.String())
-		if err != nil {
-			continue
-		}
-		if class.Type == entities.ClassTypeQuran && class.IsActive {
-			return true
-		}
+	infoByItemID, err := s.juzItemRepo.FindJuzInfoByItemIDs([]string{item.ID.String()})
+	if err != nil {
+		return false
 	}
-	return false
+	info, exists := infoByItemID[item.ID.String()]
+	if !exists || info.ClassID == nil {
+		return false
+	}
+	class, err := s.classRepo.FindByID(*info.ClassID)
+	if err != nil || class.Type != entities.ClassTypeQuran || !class.IsActive {
+		return false
+	}
+	isMember, err := s.classMemberRepo.IsMember(class.ID.String(), userID.String())
+	return err == nil && isMember
 }
 
 func (s *ItemReviewService) canAccessBookItem(item *entities.Item, userID uuid.UUID) bool {
@@ -202,32 +207,20 @@ func (s *ItemReviewService) ReviewItem(
 		}
 	}
 
-	if item.Status == entities.ItemStatusFSRSActive {
-		daysInFSRSActive := 0
-		if item.FSRSStartAt != nil {
-			daysInFSRSActive = int(now.Sub(*item.FSRSStartAt).Hours() / 24)
-		} else if item.IntervalEndAt != nil {
-			daysInFSRSActive = int(now.Sub(*item.IntervalEndAt).Hours() / 24)
-		}
-
-		minReviews := 5
-		thresholdMet := daysInFSRSActive >= entities.GraduationIntervalDays || item.Stability >= entities.GraduateStabilityThreshold
-		if thresholdMet && item.ReviewCount >= minReviews {
-			if item.SourceType == "quran" {
-				if s.isUserInQuranClass(userID) {
-					item.Status = entities.ItemStatusPendingGraduate
-					pendingGraduate = true
-				} else {
-					item.Status = entities.ItemStatusGraduate
-					graduated = true
-				}
+	if qualifiesForGraduation(item, now) {
+		if item.SourceType == "quran" {
+			if s.isItemInActiveQuranClass(item, userID) {
+				item.Status = entities.ItemStatusPendingGraduate
+				pendingGraduate = true
 			} else {
 				item.Status = entities.ItemStatusGraduate
 				graduated = true
 			}
+		} else {
+			item.Status = entities.ItemStatusGraduate
+			graduated = true
 		}
 	}
-
 	// 13. If item is graduate, handle next review policy
 	if item.Status == entities.ItemStatusGraduate {
 		if item.SourceType == "quran" {

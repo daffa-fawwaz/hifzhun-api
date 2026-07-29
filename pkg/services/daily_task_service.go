@@ -33,6 +33,7 @@ type dailyTaskService struct {
 	classMemberRepo repositories.ClassMemberRepository
 	classRepo       repositories.ClassRepository
 	juzRepo         *repositories.JuzRepository
+	juzItemRepo     *repositories.JuzItemRepository
 }
 
 func NewDailyTaskService(
@@ -42,6 +43,7 @@ func NewDailyTaskService(
 	classMemberRepo repositories.ClassMemberRepository,
 	classRepo repositories.ClassRepository,
 	juzRepo *repositories.JuzRepository,
+	juzItemRepo *repositories.JuzItemRepository,
 ) DailyTaskService {
 	return &dailyTaskService{
 		reviewStateRepo: reviewStateRepo,
@@ -50,25 +52,28 @@ func NewDailyTaskService(
 		classMemberRepo: classMemberRepo,
 		classRepo:       classRepo,
 		juzRepo:         juzRepo,
+		juzItemRepo:     juzItemRepo,
 	}
 }
 
-func (s *dailyTaskService) isUserInQuranClass(userID uuid.UUID) bool {
-	classes, err := s.classMemberRepo.FindByUserID(userID.String())
-	if err != nil || len(classes) == 0 {
+func (s *dailyTaskService) isItemInActiveQuranClass(item *entities.Item, userID uuid.UUID) bool {
+	if item == nil || item.SourceType != "quran" || s.juzItemRepo == nil {
 		return false
 	}
-
-	for _, membership := range classes {
-		class, err := s.classRepo.FindByID(membership.ClassID.String())
-		if err != nil {
-			continue
-		}
-		if class.Type == entities.ClassTypeQuran && class.IsActive {
-			return true
-		}
+	infoByItemID, err := s.juzItemRepo.FindJuzInfoByItemIDs([]string{item.ID.String()})
+	if err != nil {
+		return false
 	}
-	return false
+	info, exists := infoByItemID[item.ID.String()]
+	if !exists || info.ClassID == nil {
+		return false
+	}
+	class, err := s.classRepo.FindByID(*info.ClassID)
+	if err != nil || class.Type != entities.ClassTypeQuran || !class.IsActive {
+		return false
+	}
+	isMember, err := s.classMemberRepo.IsMember(class.ID.String(), userID.String())
+	return err == nil && isMember
 }
 
 func (s *dailyTaskService) GenerateToday(
@@ -95,7 +100,10 @@ func (s *dailyTaskService) GenerateToday(
 			if item.SourceType == "book" {
 				continue
 			}
-			if s.isUserInQuranClass(userID) {
+			if !qualifiesForGraduation(&item, now) {
+				continue
+			}
+			if s.isItemInActiveQuranClass(&item, userID) {
 				item.Status = entities.ItemStatusPendingGraduate
 			} else {
 				item.Status = entities.ItemStatusGraduate
@@ -114,7 +122,10 @@ func (s *dailyTaskService) GenerateToday(
 			if item.SourceType == "book" {
 				continue
 			}
-			if s.isUserInQuranClass(userID) {
+			if !qualifiesForGraduation(&item, now) {
+				continue
+			}
+			if s.isItemInActiveQuranClass(&item, userID) {
 				item.Status = entities.ItemStatusPendingGraduate
 			} else {
 				item.Status = entities.ItemStatusGraduate

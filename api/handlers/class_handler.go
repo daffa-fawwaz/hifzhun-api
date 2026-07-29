@@ -170,7 +170,7 @@ func (h *ClassHandler) DeleteClass(c *fiber.Ctx) error {
 // @Param title formData string true "Book title"
 // @Param description formData string false "Book description"
 // @Param order formData int false "Book order in the class"
-// @Param cover_image formData file true "Cover image file (png, jpg, jpeg, webp; max 3MB)"
+// @Param cover_image formData file false "Optional cover image file (png, jpg, jpeg, webp; max 3MB)"
 // @Success 201 {object} utils.SuccessResponse{data=entities.ClassBook}
 // @Failure 400 {object} utils.ErrorResponse
 // @Failure 403 {object} utils.ErrorResponse
@@ -182,10 +182,6 @@ func (h *ClassHandler) CreateBookInClass(c *fiber.Ctx) error {
 	if !isMultipartForm(c) {
 		return utils.Error(c, fiber.StatusBadRequest, "content type must be multipart/form-data", "BAD_REQUEST", nil)
 	}
-	if _, err := c.FormFile("cover_image"); err != nil {
-		return utils.Error(c, fiber.StatusBadRequest, "cover_image file is required", "BAD_REQUEST", nil)
-	}
-
 	var req coverImagePayload
 	if err := parseCoverImagePayload(c, &req); err != nil {
 		return utils.Error(c, fiber.StatusBadRequest, err.Error(), "BAD_REQUEST", nil)
@@ -280,6 +276,30 @@ func (h *ClassHandler) GetStudentProgress(c *fiber.Ctx) error {
 	}
 
 	return utils.Success(c, fiber.StatusOK, "student progress fetched successfully", progress, nil)
+}
+
+// GetClassBookStudentProgress godoc
+// @Summary Get student progress for one class book
+// @Description Teacher gets per-student progress for one book assigned to a book-type class, including phase counts, stability, review count for each started item, and average stability divided by all items defined in the book.
+// @Tags Class
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Class ID"
+// @Param book_id path string true "Book ID"
+// @Success 200 {object} utils.SuccessResponse{data=services.ClassBookStudentProgress}
+// @Failure 400 {object} utils.ErrorResponse
+// @Failure 403 {object} utils.ErrorResponse
+// @Router /classes/{id}/books/{book_id}/progress [get]
+func (h *ClassHandler) GetClassBookStudentProgress(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+
+	progress, err := h.classSvc.GetClassBookStudentProgress(c.Params("id"), c.Params("book_id"), userID)
+	if err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, err.Error(), "GET_BOOK_PROGRESS_FAILED", nil)
+	}
+
+	return utils.Success(c, fiber.StatusOK, "book student progress fetched successfully", progress, nil)
 }
 
 // GetClassMembers godoc
