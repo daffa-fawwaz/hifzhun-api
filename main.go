@@ -116,6 +116,7 @@ func main() {
 		classMemberRepo,
 		classRepo,
 		juzRepo,
+		juzItemRepo,
 	)
 	dailyTaskHandler := handlers.NewDailyTaskHandler(dailyTaskSvc, itemRepoForDaily, juzItemRepo, bookRepo, repositories.NewBookItemRepository(config.DB), classBookRepoForDaily, appCache)
 
@@ -154,7 +155,7 @@ func main() {
 	classHandler := handlers.NewClassHandler(classSvc)
 
 	// ================= ITEM REVIEW =================
-	itemReviewSvc := services.NewItemReviewService(itemRepo, fsrsWeightsRepo, dailyTaskActionRepo, classMemberRepo, classRepo, classBookRepo)
+	itemReviewSvc := services.NewItemReviewService(itemRepo, fsrsWeightsRepo, dailyTaskActionRepo, classMemberRepo, classRepo, classBookRepo, juzItemRepo)
 	itemReviewHandler := handlers.NewItemReviewHandler(itemReviewSvc, juzItemRepo, appCache)
 
 	// ================= MY ITEMS =================

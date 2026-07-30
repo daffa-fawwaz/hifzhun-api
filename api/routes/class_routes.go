@@ -45,6 +45,7 @@ func RegisterClassRoutes(
 	// Class members & progress (Teacher only)
 	teacher.Get("/:id/members", classHandler.GetClassMembers)
 	teacher.Get("/:id/progress", classHandler.GetStudentProgress)
+	teacher.Get("/:id/books/:book_id/progress", classHandler.GetClassBookStudentProgress)
 
 	// Graduation approval (Teacher only - Quran classes)
 	teacher.Get("/:id/graduations/pending", classHandler.GetPendingGraduations)

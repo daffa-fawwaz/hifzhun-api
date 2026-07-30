@@ -151,6 +151,7 @@ func (r *ItemRepository) FindEligibleForGraduation(ownerID uuid.UUID, thresholdD
 	// Fallback to interval_end_at for backward compatibility if fsrs_start_at is NULL.
 	err := r.db.
 		Where("owner_id = ? AND status = ? AND source_type = 'quran'", ownerID, entities.ItemStatusFSRSActive).
+		Where("review_count >= ?", 5).
 		Where("(fsrs_start_at IS NOT NULL AND fsrs_start_at <= ?) OR (fsrs_start_at IS NULL AND interval_end_at IS NOT NULL AND interval_end_at <= ?)", cutoff, cutoff).
 		Find(&items).Error
 	return items, err
@@ -232,8 +233,8 @@ func (r *ItemRepository) FindClassBookItemIDsByUser(ownerID uuid.UUID) (map[uuid
 func (r *ItemRepository) FindEligibleForGraduationByStability(ownerID uuid.UUID, stabilityThreshold float64) ([]entities.Item, error) {
 	var items []entities.Item
 	err := r.db.
-		Where("owner_id = ? AND status = ? AND source_type = 'quran' AND stability >= ?",
-			ownerID, entities.ItemStatusFSRSActive, stabilityThreshold).
+		Where("owner_id = ? AND status = ? AND source_type = 'quran' AND stability >= ? AND review_count >= ?",
+			ownerID, entities.ItemStatusFSRSActive, stabilityThreshold, 5).
 		Find(&items).Error
 	return items, err
 }
