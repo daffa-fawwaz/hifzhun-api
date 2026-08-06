@@ -1109,3 +1109,48 @@ func (h *BookHandler) RemoveFromMyBookCollection(c *fiber.Ctx) error {
 
 	return utils.Success(c, fiber.StatusOK, "book removed from collection successfully", nil, nil)
 }
+
+// GetMyOverride godoc
+// @Summary Get my override for a book item
+// @Description Get the personal override (if any) for a specific book item
+// @Tags Book Item Override
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param item_id path string true "Book Item ID"
+// @Success 200 {object} utils.SuccessResponse{data=entities.BookItemOverride}
+// @Failure 404 {object} utils.ErrorResponse
+// @Router /books/items/{item_id}/my-override [get]
+func (h *BookHandler) GetMyOverride(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	bookItemID := c.Params("item_id")
+
+	override, err := h.bookSvc.GetMyOverride(userID, bookItemID)
+	if err != nil {
+		return utils.Error(c, fiber.StatusNotFound, err.Error(), "GET_OVERRIDE_FAILED", nil)
+	}
+
+	return utils.Success(c, fiber.StatusOK, "override fetched successfully", override, nil)
+}
+
+// RemoveMyOverride godoc
+// @Summary Remove my override for a book item
+// @Description Delete the personal override, restoring view to canonical content
+// @Tags Book Item Override
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param item_id path string true "Book Item ID"
+// @Success 200 {object} utils.SuccessResponse
+// @Failure 400 {object} utils.ErrorResponse
+// @Router /books/items/{item_id}/my-override [delete]
+func (h *BookHandler) RemoveMyOverride(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	bookItemID := c.Params("item_id")
+
+	if err := h.bookSvc.RemoveMyOverride(userID, bookItemID); err != nil {
+		return utils.Error(c, fiber.StatusBadRequest, err.Error(), "REMOVE_OVERRIDE_FAILED", nil)
+	}
+
+	return utils.Success(c, fiber.StatusOK, "override removed successfully", nil, nil)
+}

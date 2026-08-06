@@ -76,6 +76,7 @@ type MyItemService struct {
 	juzItemRepo  *repositories.JuzItemRepository
 	bookRepo     repositories.BookRepository
 	bookItemRepo repositories.BookItemRepository
+	overrideRepo repositories.BookItemOverrideRepository
 }
 
 func NewMyItemService(
@@ -83,12 +84,14 @@ func NewMyItemService(
 	juzItemRepo *repositories.JuzItemRepository,
 	bookRepo repositories.BookRepository,
 	bookItemRepo repositories.BookItemRepository,
+	overrideRepo repositories.BookItemOverrideRepository,
 ) *MyItemService {
 	return &MyItemService{
 		itemRepo:     itemRepo,
 		juzItemRepo:  juzItemRepo,
 		bookRepo:     bookRepo,
 		bookItemRepo: bookItemRepo,
+		overrideRepo: overrideRepo,
 	}
 }
 
@@ -206,12 +209,18 @@ func (s *MyItemService) GetMyBookItems(userID uuid.UUID) (*MyItemsBookResponse, 
 
 	// Batch fetch book items for titles
 	bookItemTitleMap := make(map[string]string)
+	bookItemsToResolve := make([]entities.BookItem, 0)
 	for bookItemID := range bookItemIDSet {
 		bookItem, err := s.bookItemRepo.FindByID(bookItemID)
 		if err == nil {
 			bookItemTitleMap[bookItemID] = bookItem.Title
+			bookItemsToResolve = append(bookItemsToResolve, *bookItem)
 		}
 	}
+
+	// ── Apply overrides for this user ───────────────────────────────────────
+	// Call batch resolver so personal edits override canonical values.
+	resolvedMap := ResolveBatchBookItemContent(bookItemsToResolve, &userID, s.overrideRepo)
 
 	// Group items by book
 	bookGroupMap := make(map[string]*BookGroup)
@@ -239,6 +248,15 @@ func (s *MyItemService) GetMyBookItems(userID uuid.UUID) (*MyItemsBookResponse, 
 			bookOrder = append(bookOrder, ref.BookID)
 		}
 
+		// Use resolved title (override applied if present).
+		bookItemUUID, parseErr := uuid.Parse(ref.BookItemID)
+		resolvedTitle := bookItemTitleMap[ref.BookItemID]
+		if parseErr == nil {
+			if resolved, exists := resolvedMap[bookItemUUID]; exists {
+				resolvedTitle = resolved.Title
+			}
+		}
+
 		bookGroupMap[ref.BookID].Items = append(bookGroupMap[ref.BookID].Items, BookItemDetail{
 			MyItemDetail: MyItemDetail{
 				ItemID:      item.ID,
@@ -248,7 +266,7 @@ func (s *MyItemService) GetMyBookItems(userID uuid.UUID) (*MyItemsBookResponse, 
 				NextReview:  nextReviewFor(item),
 				CreatedAt:   item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			},
-			BookItemTitle: bookItemTitleMap[ref.BookItemID],
+			BookItemTitle: resolvedTitle,
 		})
 	}
 

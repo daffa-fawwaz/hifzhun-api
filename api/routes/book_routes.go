@@ -54,4 +54,8 @@ func RegisterBookRoutes(
 
 	// Memorization - start memorizing a specific book item
 	books.Post("/:id/items/:item_id/start", bookHandler.StartMemorization)
+
+	// Book Item Overrides
+	books.Get("/items/:item_id/my-override", bookHandler.GetMyOverride)
+	books.Delete("/items/:item_id/my-override", bookHandler.RemoveMyOverride)
 }
