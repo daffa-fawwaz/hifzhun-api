@@ -142,13 +142,14 @@ func main() {
 	bookItemRepo := repositories.NewBookItemRepository(config.DB)
 	bookUpdateRequestRepo := repositories.NewBookUpdateRequestRepository(config.DB)
 	classBookRepo := repositories.NewClassBookRepository(config.DB)
-	bookSvc := services.NewBookService(bookRepo, bookModuleRepo, bookItemRepo, classBookRepo, itemRepo, userRepo, bookUpdateRequestRepo)
+	bookItemOverrideRepo := repositories.NewBookItemOverrideRepository(config.DB)
+	bookSvc := services.NewBookService(bookRepo, bookModuleRepo, bookItemRepo, classBookRepo, itemRepo, userRepo, bookUpdateRequestRepo, bookItemOverrideRepo)
 	bookHandler := handlers.NewBookHandler(bookSvc, userRepo, appCache)
 
 	// ================= ITEM STATUS =================
 	intervalReviewLogRepo := repositories.NewIntervalReviewLogRepository(config.DB)
 	itemStatusSvc := services.NewItemStatusService(itemRepo, intervalReviewLogRepo, classBookRepo, dailyTaskActionRepo)
-	itemStatusHandler := handlers.NewItemStatusHandler(itemStatusSvc, juzItemRepo, bookRepo, bookItemRepo, itemRepo, appCache)
+	itemStatusHandler := handlers.NewItemStatusHandler(itemStatusSvc, juzItemRepo, bookRepo, bookItemRepo, itemRepo, bookItemOverrideRepo, appCache)
 
 	// ================= CLASS =================
 	classSvc := services.NewClassService(classRepo, classMemberRepo, classBookRepo, bookRepo, userRepo, itemRepo, juzRepo, juzItemRepo)
@@ -159,7 +160,7 @@ func main() {
 	itemReviewHandler := handlers.NewItemReviewHandler(itemReviewSvc, juzItemRepo, appCache)
 
 	// ================= MY ITEMS =================
-	myItemSvc := services.NewMyItemService(itemRepo, juzItemRepo, bookRepo, bookItemRepo)
+	myItemSvc := services.NewMyItemService(itemRepo, juzItemRepo, bookRepo, bookItemRepo, bookItemOverrideRepo)
 	myItemHandler := handlers.NewMyItemHandler(myItemSvc, appCache)
 
 	// ================= CLASS DAILY =================

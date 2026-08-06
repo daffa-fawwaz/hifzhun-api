@@ -19,11 +19,12 @@ type ItemStatusHandler struct {
 	bookRepo     repositories.BookRepository
 	bookItemRepo repositories.BookItemRepository
 	itemRepo     *repositories.ItemRepository
+	overrideRepo repositories.BookItemOverrideRepository
 	cache        *cache.Cache
 }
 
-func NewItemStatusHandler(s *services.ItemStatusService, juzItemRepo *repositories.JuzItemRepository, bookRepo repositories.BookRepository, bookItemRepo repositories.BookItemRepository, itemRepo *repositories.ItemRepository, c *cache.Cache) *ItemStatusHandler {
-	return &ItemStatusHandler{service: s, juzItemRepo: juzItemRepo, bookRepo: bookRepo, bookItemRepo: bookItemRepo, itemRepo: itemRepo, cache: c}
+func NewItemStatusHandler(s *services.ItemStatusService, juzItemRepo *repositories.JuzItemRepository, bookRepo repositories.BookRepository, bookItemRepo repositories.BookItemRepository, itemRepo *repositories.ItemRepository, overrideRepo repositories.BookItemOverrideRepository, c *cache.Cache) *ItemStatusHandler {
+	return &ItemStatusHandler{service: s, juzItemRepo: juzItemRepo, bookRepo: bookRepo, bookItemRepo: bookItemRepo, itemRepo: itemRepo, overrideRepo: overrideRepo, cache: c}
 }
 
 func (h *ItemStatusHandler) invalidateItemCaches(c *fiber.Ctx, userID uuid.UUID) {
@@ -234,14 +235,17 @@ func (h *ItemStatusHandler) GetDetail(c *fiber.Ctx) error {
 				resp.BookTitle = &title
 			}
 			if bi, err := h.bookItemRepo.FindByID(bookItemID); err == nil {
-				bit := bi.Title
+				// ── Apply user override if present ─────────────────────────
+				resolved := services.ResolveBookItemContent(bi, &userID, h.overrideRepo)
+
+				bit := resolved.Title
 				resp.BookItemTitle = &bit
-				q := bi.Content
-				a := bi.Answer
+				q := resolved.Content
+				a := resolved.Answer
 				resp.Question = &q
 				resp.Answer = &a
-				if bi.ImageURL != "" {
-					img := bi.ImageURL
+				if resolved.ImageURL != "" {
+					img := resolved.ImageURL
 					resp.Image = &img
 				}
 			}

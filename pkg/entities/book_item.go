@@ -12,6 +12,11 @@ type BookItem struct {
 	BookID   uuid.UUID  `gorm:"type:uuid;not null;index" json:"book_id"`
 	ModuleID *uuid.UUID `gorm:"type:uuid;index" json:"module_id,omitempty"` // null jika langsung di book
 
+	// ImporterID: null untuk item milik pemilik buku (canonical).
+	// Terisi dengan user_id importer jika item dibuat oleh non-owner pada
+	// published book — item tersebut HANYA terlihat untuk importer tersebut.
+	ImporterID *uuid.UUID `gorm:"type:uuid;index" json:"importer_id,omitempty"`
+
 	Title   string `gorm:"size:200;not null" json:"title"`
 	Content string `gorm:"type:text" json:"content"` // materi konten
 	Answer  string `gorm:"type:text" json:"answer"`  // jawaban

@@ -63,6 +63,10 @@ type BookService interface {
 	// My Book Collection
 	GetMyBookCollection(userID uuid.UUID) ([]BookCollectionItem, error)
 	RemoveFromMyBookCollection(userID uuid.UUID, bookID string) error
+
+	// Book Item Overrides
+	GetMyOverride(userID uuid.UUID, bookItemID string) (*entities.BookItemOverride, error)
+	RemoveMyOverride(userID uuid.UUID, bookItemID string) error
 }
 
 // BookItemWithStability represents a BookItem with stability information
@@ -176,6 +180,7 @@ type bookService struct {
 	itemRepo          *repositories.ItemRepository
 	userRepo          repositories.UserRepository
 	updateRequestRepo *repositories.BookUpdateRequestRepository
+	overrideRepo      repositories.BookItemOverrideRepository
 }
 
 func NewBookService(
@@ -186,6 +191,7 @@ func NewBookService(
 	itemRepo *repositories.ItemRepository,
 	userRepo repositories.UserRepository,
 	updateRequestRepo *repositories.BookUpdateRequestRepository,
+	overrideRepo repositories.BookItemOverrideRepository,
 ) BookService {
 	return &bookService{
 		bookRepo:          bookRepo,
@@ -195,6 +201,7 @@ func NewBookService(
 		itemRepo:          itemRepo,
 		userRepo:          userRepo,
 		updateRequestRepo: updateRequestRepo,
+		overrideRepo:      overrideRepo,
 	}
 }
 
@@ -323,7 +330,13 @@ func (s *bookService) GetBookDetailWithStability(bookID string, userID *uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.bookItemRepo.FindByBookID(bookID)
+	// Show importer's personal items alongside canonical ones when user is not the owner.
+	var items []entities.BookItem
+	if userID != nil && book.OwnerID != *userID {
+		items, err = s.bookItemRepo.FindByBookIDForImporter(bookID, *userID)
+	} else {
+		items, err = s.bookItemRepo.FindByBookID(bookID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +440,13 @@ func (s *bookService) GetBookTree(bookID string, userID *uuid.UUID, role string)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.bookItemRepo.FindByBookID(bookID)
+	// Show importer's personal items alongside canonical ones when user is not the owner.
+	var items []entities.BookItem
+	if userID != nil && book.OwnerID != *userID {
+		items, err = s.bookItemRepo.FindByBookIDForImporter(bookID, *userID)
+	} else {
+		items, err = s.bookItemRepo.FindByBookID(bookID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -529,6 +548,10 @@ func (s *bookService) AddPublishedBookToMyBook(userID uuid.UUID, bookID string) 
 	bookItems, err := s.bookItemRepo.FindByBookID(bookID)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(bookItems) == 0 {
+		return nil, errors.New("book has no items")
 	}
 
 	result := &AddPublishedBookToMyBookResult{
@@ -1112,6 +1135,130 @@ func (s *bookService) DeleteModule(moduleID string, ownerID uuid.UUID) error {
 
 // ==================== ITEM CRUD ====================
 
+// ResolvedBookItem wraps a BookItem with resolved content (override applied if exists).
+type ResolvedBookItem struct {
+	entities.BookItem
+	HasOverride bool `json:"has_override"` // true if user has personal override for this item
+}
+
+// ResolveBookItemContent resolves a BookItem's content for a specific user.
+// If the user has a BookItemOverride for this item, the override values shadow
+// the canonical BookItem fields. Otherwise, returns the canonical item as-is.
+//
+// This is the single source of truth for reading BookItem content across the app:
+// all handlers/services that serve title/content/answer to the user MUST call this.
+func ResolveBookItemContent(
+	canonical *entities.BookItem,
+	userID *uuid.UUID,
+	overrideRepo repositories.BookItemOverrideRepository,
+) ResolvedBookItem {
+	resolved := ResolvedBookItem{
+		BookItem:    *canonical,
+		HasOverride: false,
+	}
+
+	if userID == nil || overrideRepo == nil {
+		return resolved
+	}
+
+	override, err := overrideRepo.FindByUserAndBookItemID(*userID, canonical.ID)
+	if err != nil || override == nil {
+		return resolved
+	}
+
+	// Apply override: non-empty fields from override replace canonical values.
+	resolved.HasOverride = true
+	if override.Title != "" {
+		resolved.Title = override.Title
+	}
+	if override.Content != "" {
+		resolved.Content = override.Content
+	}
+	if override.Answer != "" {
+		resolved.Answer = override.Answer
+	}
+	if override.ImageURL != "" {
+		resolved.ImageURL = override.ImageURL
+	}
+	if override.EstimatedReviewSeconds > 0 {
+		resolved.EstimatedReviewSeconds = override.EstimatedReviewSeconds
+	}
+
+	return resolved
+}
+
+// ResolveBatchBookItemContent batch-resolves multiple BookItems for a user.
+// Returns a map keyed by book_item_id string for O(1) lookup.
+func ResolveBatchBookItemContent(
+	canonicals []entities.BookItem,
+	userID *uuid.UUID,
+	overrideRepo repositories.BookItemOverrideRepository,
+) map[uuid.UUID]ResolvedBookItem {
+	result := make(map[uuid.UUID]ResolvedBookItem, len(canonicals))
+
+	if len(canonicals) == 0 || userID == nil || overrideRepo == nil {
+		// No overrides possible; return canonicals as-is.
+		for _, item := range canonicals {
+			result[item.ID] = ResolvedBookItem{BookItem: item, HasOverride: false}
+		}
+		return result
+	}
+
+	// Batch-fetch all overrides for this user + these book_item_ids.
+	bookItemIDs := make([]uuid.UUID, len(canonicals))
+	for i, item := range canonicals {
+		bookItemIDs[i] = item.ID
+	}
+	overrideMap, err := overrideRepo.FindByUserAndBookItemIDs(*userID, bookItemIDs)
+	if err != nil {
+		overrideMap = make(map[uuid.UUID]*entities.BookItemOverride)
+	}
+
+	// Build resolved map.
+	for _, canonical := range canonicals {
+		resolved := ResolvedBookItem{
+			BookItem:    canonical,
+			HasOverride: false,
+		}
+
+		if override, exists := overrideMap[canonical.ID]; exists && override != nil {
+			resolved.HasOverride = true
+			if override.Title != "" {
+				resolved.Title = override.Title
+			}
+			if override.Content != "" {
+				resolved.Content = override.Content
+			}
+			if override.Answer != "" {
+				resolved.Answer = override.Answer
+			}
+			if override.ImageURL != "" {
+				resolved.ImageURL = override.ImageURL
+			}
+			if override.EstimatedReviewSeconds > 0 {
+				resolved.EstimatedReviewSeconds = override.EstimatedReviewSeconds
+			}
+		}
+
+		result[canonical.ID] = resolved
+	}
+
+	return result
+}
+
+// normalizeEstSeconds converts estimateVal + estimateUnit to seconds.
+func normalizeEstSeconds(estimateVal int, estimateUnit string) int {
+	if estimateVal <= 0 {
+		return 0
+	}
+	switch strings.ToLower(estimateUnit) {
+	case "minutes", "minute", "min", "m":
+		return estimateVal * 60
+	default:
+		return estimateVal
+	}
+}
+
 func (s *bookService) AddItem(bookID string, moduleID *uuid.UUID, ownerID uuid.UUID, title, content, answer string, order int, estimateVal int, estimateUnit string, imageURL string) (*entities.BookItem, error) {
 	book, err := s.bookRepo.FindByID(bookID)
 	if err != nil {
@@ -1130,7 +1277,6 @@ func (s *bookService) AddItem(bookID string, moduleID *uuid.UUID, ownerID uuid.U
 		}
 	}
 
-	// Allow owner to add items to published books
 	// Title is optional, but content or answer must be provided
 	if content == "" && answer == "" {
 		return nil, errors.New("either content or answer must be provided")
@@ -1147,20 +1293,44 @@ func (s *bookService) AddItem(bookID string, moduleID *uuid.UUID, ownerID uuid.U
 		}
 	}
 
-	// Normalize estimation into seconds
-	estSeconds := 0
-	if estimateVal > 0 {
-		switch estimateUnit {
-		case "minutes", "minute", "min", "m":
-			estSeconds = estimateVal * 60
-		default:
-			estSeconds = estimateVal
+	estSeconds := normalizeEstSeconds(estimateVal, estimateUnit)
+
+	// ── Non-owner of a published book → create personal BookItem with ImporterID ─
+	// BookItem dengan importer_id terisi TIDAK akan muncul di FindByBookID (canonical),
+	// sehingga pemilik buku dan importer lain tidak melihatnya sama sekali.
+	if book.Status == entities.BookStatusPublished && book.OwnerID != ownerID {
+		importerItem := &entities.BookItem{
+			BookID:                 uuid.MustParse(bookID),
+			ModuleID:               moduleID,
+			ImporterID:             &ownerID, // tandai sebagai milik importer ini
+			Title:                  title,
+			Content:                content,
+			Answer:                 answer,
+			Order:                  order,
+			EstimatedReviewSeconds: estSeconds,
+			ImageURL:               imageURL,
+			CreatedAt:              time.Now().In(config.AppLocation),
+			UpdatedAt:              time.Now().In(config.AppLocation),
 		}
-		if estSeconds < 0 {
-			estSeconds = 0
+		if err := s.bookItemRepo.Create(importerItem); err != nil {
+			return nil, err
 		}
+
+		// Buat Item (memorization row) agar muncul di daily feed dan koleksi importer.
+		contentRef := "book:" + bookID + ":item:" + importerItem.ID.String()
+		memItem := &entities.Item{
+			OwnerID:                ownerID,
+			SourceType:             "book",
+			ContentRef:             contentRef,
+			Status:                 entities.ItemStatusMenghafal,
+			EstimatedReviewSeconds: estSeconds,
+		}
+		_ = s.itemRepo.Create(memItem)
+
+		return importerItem, nil
 	}
 
+	// ── Owner (or draft book) → write directly to book_items ───────────────
 	item := &entities.BookItem{
 		BookID:                 uuid.MustParse(bookID),
 		ModuleID:               moduleID,
@@ -1204,6 +1374,96 @@ func (s *bookService) UpdateItem(itemID string, ownerID uuid.UUID, title, conten
 		}
 	}
 
+	// ── Non-owner of a published book ──────────────────────────────────────
+	if book.Status == entities.BookStatusPublished && book.OwnerID != ownerID {
+		// Case A: item adalah milik importer ini sendiri (importer_id = ownerID)
+		//         → edit langsung BookItem mereka.
+		if item.ImporterID != nil && *item.ImporterID == ownerID {
+			if title != "" {
+				item.Title = title
+			}
+			if content != "" {
+				item.Content = content
+			}
+			if answer != "" {
+				item.Answer = answer
+			}
+			if order > 0 {
+				item.Order = order
+			}
+			if estimateVal > 0 {
+				item.EstimatedReviewSeconds = normalizeEstSeconds(estimateVal, estimateUnit)
+			}
+			if imageURL != "" {
+				item.ImageURL = imageURL
+			} else if removeImage {
+				_ = utils.DeleteFromSupabase(item.ImageURL)
+				item.ImageURL = ""
+			}
+			item.UpdatedAt = time.Now().In(config.AppLocation)
+			if err := s.bookItemRepo.Update(item); err != nil {
+				return nil, err
+			}
+			return item, nil
+		}
+
+		// Case B: item adalah canonical (importer_id IS NULL), artinya importer
+		//         ingin meng-override konten canonical → simpan ke BookItemOverride.
+		if item.ImporterID != nil {
+			return nil, errors.New("you don't have permission to update this item")
+		}
+
+		if s.overrideRepo == nil {
+			return nil, errors.New("override repository not available")
+		}
+
+		existing, _ := s.overrideRepo.FindByUserAndBookItemID(ownerID, item.ID)
+		var base entities.BookItemOverride
+		if existing != nil {
+			base = *existing
+		} else {
+			base = entities.BookItemOverride{
+				UserID:                 ownerID,
+				BookItemID:             item.ID,
+				Title:                  item.Title,
+				Content:                item.Content,
+				Answer:                 item.Answer,
+				ImageURL:               item.ImageURL,
+				EstimatedReviewSeconds: item.EstimatedReviewSeconds,
+			}
+		}
+		if title != "" {
+			base.Title = title
+		}
+		if content != "" {
+			base.Content = content
+		}
+		if answer != "" {
+			base.Answer = answer
+		}
+		if imageURL != "" {
+			base.ImageURL = imageURL
+		} else if removeImage {
+			_ = utils.DeleteFromSupabase(base.ImageURL)
+			base.ImageURL = ""
+		}
+		if estimateVal > 0 {
+			base.EstimatedReviewSeconds = normalizeEstSeconds(estimateVal, estimateUnit)
+		}
+		base.UpdatedAt = time.Now().In(config.AppLocation)
+		if err := s.overrideRepo.Upsert(&base); err != nil {
+			return nil, err
+		}
+		result := *item
+		result.Title = base.Title
+		result.Content = base.Content
+		result.Answer = base.Answer
+		result.ImageURL = base.ImageURL
+		result.EstimatedReviewSeconds = base.EstimatedReviewSeconds
+		return &result, nil
+	}
+
+	// ── Owner (or draft book) → mutate the canonical BookItem ──────────────
 	if title != "" {
 		item.Title = title
 	}
@@ -1217,12 +1477,7 @@ func (s *bookService) UpdateItem(itemID string, ownerID uuid.UUID, title, conten
 		item.Order = order
 	}
 	if estimateVal > 0 {
-		switch strings.ToLower(estimateUnit) {
-		case "minutes":
-			item.EstimatedReviewSeconds = estimateVal * 60
-		default: // "seconds" or anything else
-			item.EstimatedReviewSeconds = estimateVal
-		}
+		item.EstimatedReviewSeconds = normalizeEstSeconds(estimateVal, estimateUnit)
 	}
 	if imageURL != "" {
 		item.ImageURL = imageURL
@@ -1263,15 +1518,50 @@ func (s *bookService) DeleteItem(itemID string, ownerID uuid.UUID) error {
 		}
 	}
 
-	// Delete Item entity if it exists (user already started memorizing this item)
+	// ── Non-owner of a published book → only remove their personal BookItem
+	//    (importer_id = ownerID), their override, and their memorization Item row.
+	//    The canonical BookItem (importer_id IS NULL) stays intact.
+	if book.Status == entities.BookStatusPublished && book.OwnerID != ownerID {
+		// Only allowed to delete items they personally created (importer_id = ownerID).
+		if item.ImporterID == nil || *item.ImporterID != ownerID {
+			return errors.New("you don't have permission to delete this item")
+		}
+
+		// Remove personal override if present.
+		if s.overrideRepo != nil {
+			_ = s.overrideRepo.DeleteByUserAndBookItemID(ownerID, item.ID)
+		}
+
+		// Remove only this user's memorization Item row.
+		contentRef := "book:" + item.BookID.String() + ":item:" + itemID
+		userItems, err := s.itemRepo.FindByOwnerAndContentRef(ownerID, contentRef)
+		if err == nil {
+			for _, ui := range userItems {
+				_ = s.itemRepo.DeleteByID(ui.ID)
+			}
+		}
+
+		// Delete the personal BookItem itself.
+		return s.bookItemRepo.Delete(itemID)
+	}
+
+	// ── Owner → delete the canonical BookItem (and all memorization rows for
+	//    everyone pointing to it, plus any overrides).
 	contentRef := "book:" + item.BookID.String() + ":item:" + itemID
 	existingItems, err := s.itemRepo.FindByContentRef(contentRef)
 	if err == nil && len(existingItems) > 0 {
 		for _, existingItem := range existingItems {
 			if err := s.itemRepo.DeleteByID(existingItem.ID); err != nil {
 				// Log error but continue with BookItem deletion
-				// This ensures BookItem is deleted even if Item deletion fails
 			}
+		}
+	}
+
+	// Clean up any personal overrides pointing to this BookItem.
+	if s.overrideRepo != nil {
+		bookItemUUID, parseErr := uuid.Parse(itemID)
+		if parseErr == nil {
+			_ = s.overrideRepo.DeleteByUserAndBookItemID(ownerID, bookItemUUID)
 		}
 	}
 
@@ -1459,4 +1749,56 @@ func (s *bookService) RemoveFromMyBookCollection(userID uuid.UUID, bookID string
 	}
 
 	return nil
+}
+
+// ==================== BOOK ITEM OVERRIDES ====================
+
+// GetMyOverride retrieves the user's personal override for a BookItem.
+// Returns nil if no override exists (user sees canonical content).
+func (s *bookService) GetMyOverride(userID uuid.UUID, bookItemID string) (*entities.BookItemOverride, error) {
+	bookItemUUID, err := uuid.Parse(bookItemID)
+	if err != nil {
+		return nil, errors.New("invalid book_item_id")
+	}
+
+	// Verify the BookItem exists first.
+	_, err = s.bookItemRepo.FindByID(bookItemID)
+	if err != nil {
+		return nil, errors.New("book item not found")
+	}
+
+	if s.overrideRepo == nil {
+		return nil, errors.New("override repository not available")
+	}
+
+	override, err := s.overrideRepo.FindByUserAndBookItemID(userID, bookItemUUID)
+	if err != nil {
+		return nil, err
+	}
+	if override == nil {
+		return nil, errors.New("no override found for this item")
+	}
+
+	return override, nil
+}
+
+// RemoveMyOverride deletes the user's personal override for a BookItem,
+// restoring their view to the canonical content.
+func (s *bookService) RemoveMyOverride(userID uuid.UUID, bookItemID string) error {
+	bookItemUUID, err := uuid.Parse(bookItemID)
+	if err != nil {
+		return errors.New("invalid book_item_id")
+	}
+
+	// Verify the BookItem exists first.
+	_, err = s.bookItemRepo.FindByID(bookItemID)
+	if err != nil {
+		return errors.New("book item not found")
+	}
+
+	if s.overrideRepo == nil {
+		return errors.New("override repository not available")
+	}
+
+	return s.overrideRepo.DeleteByUserAndBookItemID(userID, bookItemUUID)
 }

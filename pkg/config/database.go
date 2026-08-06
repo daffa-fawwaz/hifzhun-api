@@ -64,6 +64,7 @@ func ConnectDatabase() {
 		&entities.Book{},
 		&entities.BookModule{},
 		&entities.BookItem{},
+		&entities.BookItemOverride{},
 		&entities.ClassBook{},
 		&entities.IntervalReviewLog{},
 		&entities.BookUpdateRequest{},
