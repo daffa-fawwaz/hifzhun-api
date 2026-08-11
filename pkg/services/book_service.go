@@ -579,7 +579,7 @@ func (s *bookService) AddPublishedBookToMyBook(userID uuid.UUID, bookID string) 
 			OwnerID:                userID,
 			SourceType:             "book",
 			ContentRef:             contentRef,
-			Status:                 entities.ItemStatusMenghafal,
+			Status:                 "belum_mulai",
 			EstimatedReviewSeconds: bi.EstimatedReviewSeconds,
 		}
 
@@ -1614,7 +1614,7 @@ func (s *bookService) StartItemMemorization(userID uuid.UUID, bookID, bookItemID
 
 		// If item exists but status is 'menghafal', update to 'start'
 		// This handles items created from AddPublishedBookToMyBook
-		if existingItem.Status == entities.ItemStatusMenghafal {
+		if existingItem.Status == "belum_mulai" {
 			existingItem.Status = entities.ItemStatusStart
 			if err := s.itemRepo.Update(existingItem); err != nil {
 				return nil, err
