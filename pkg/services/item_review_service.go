@@ -96,7 +96,14 @@ func (s *ItemReviewService) canAccessBookItem(item *entities.Item, userID uuid.U
 
 	isPublished, err := s.classBookRepo.IsBookPublished(bookID)
 	if err == nil && isPublished {
-		return true
+		isImported, err := s.classBookRepo.IsBookImportedByUser(bookID, userID.String())
+		if err == nil && isImported {
+			return true
+		}
+		isOwner, err := s.classBookRepo.IsBookOwner(bookID, userID.String())
+		if err == nil && isOwner {
+			return true
+		}
 	}
 
 	isOwner, err := s.classBookRepo.IsBookOwner(bookID, userID.String())

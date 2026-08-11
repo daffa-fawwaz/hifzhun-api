@@ -3,6 +3,7 @@ package repositories
 import (
 	"hifzhun-api/pkg/entities"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -19,6 +20,10 @@ type ClassBookRepository interface {
 	IsBookOwner(bookID, userID string) (bool, error)
 	// IsBookPublished returns true when status of the book is published.
 	IsBookPublished(bookID string) (bool, error)
+	CreateImportedBook(userID, bookID string) error
+	IsBookImportedByUser(bookID, userID string) (bool, error)
+	FindImportedBooksByUserID(userID string) ([]entities.ImportedBook, error)
+	DeleteImportedBook(userID, bookID string) error
 	CountByClassID(classID string) (int64, error)
 	Delete(id string) error
 	DeleteByClassID(classID string) error
@@ -107,6 +112,33 @@ func (r *classBookRepository) IsBookPublished(bookID string) (bool, error) {
 		Where("id = ? AND status = ?", bookID, "published").
 		Count(&count).Error
 	return count > 0, err
+}
+
+func (r *classBookRepository) CreateImportedBook(userID, bookID string) error {
+	imported := &entities.ImportedBook{
+		ID:     uuid.New(),
+		UserID: uuid.MustParse(userID),
+		BookID: uuid.MustParse(bookID),
+	}
+	return r.db.Create(imported).Error
+}
+
+func (r *classBookRepository) IsBookImportedByUser(bookID, userID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&entities.ImportedBook{}).
+		Where("book_id = ? AND user_id = ?", bookID, userID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *classBookRepository) FindImportedBooksByUserID(userID string) ([]entities.ImportedBook, error) {
+	var imported []entities.ImportedBook
+	err := r.db.Where("user_id = ?", userID).Find(&imported).Error
+	return imported, err
+}
+
+func (r *classBookRepository) DeleteImportedBook(userID, bookID string) error {
+	return r.db.Where("user_id = ? AND book_id = ?", userID, bookID).Delete(&entities.ImportedBook{}).Error
 }
 
 func (r *classBookRepository) CountByClassID(classID string) (int64, error) {
