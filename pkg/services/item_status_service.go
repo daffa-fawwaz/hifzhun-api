@@ -62,8 +62,23 @@ func (s *ItemStatusService) canAccessBookItem(item *entities.Item, userID uuid.U
 		return true
 	}
 
-	allowed, err := s.classBookRepo.IsBookAccessibleByMember(bookID, userID.String())
-	return err == nil && allowed
+	isPublished, err := s.classBookRepo.IsBookPublished(bookID)
+	if err == nil && isPublished {
+		return true
+	}
+
+	isOwner, err := s.classBookRepo.IsBookOwner(bookID, userID.String())
+	if err == nil && isOwner {
+		return true
+	}
+
+	allowedMember, err := s.classBookRepo.IsBookAccessibleByMember(bookID, userID.String())
+	if err == nil && allowedMember {
+		return true
+	}
+
+	allowedTeacher, err := s.classBookRepo.IsBookAccessibleByTeacher(bookID, userID.String())
+	return err == nil && allowedTeacher
 }
 
 // StartInterval moves item from menghafal → interval (recurring review)
@@ -301,8 +316,8 @@ func (s *ItemStatusService) ActivateToFSRS(itemID uuid.UUID, userID uuid.UUID) (
 		return nil, errors.New("you don't have access to this book item")
 	}
 
-	// For book items: allow activation from 'start' status
-	if item.SourceType == "book" && item.Status == entities.ItemStatusStart {
+	// For book items: allow activation from 'start' or 'menghafal' status
+	if item.SourceType == "book" && (item.Status == entities.ItemStatusStart || item.Status == entities.ItemStatusMenghafal) {
 		// Book items can activate to FSRS directly
 	} else if item.Status != entities.ItemStatusInterval {
 		return nil, errors.New("item must be in 'interval' status to activate FSRS")
@@ -343,11 +358,13 @@ func (s *ItemStatusService) GetItemsByStatus(userID uuid.UUID, status string) ([
 	// Validate status
 	validStatuses := map[string]bool{
 		entities.ItemStatusMenghafal:       true,
+		entities.ItemStatusStart:           true,
 		entities.ItemStatusInterval:        true,
 		entities.ItemStatusFSRSActive:      true,
 		entities.ItemStatusPendingGraduate: true,
 		entities.ItemStatusGraduate:        true,
 		entities.ItemStatusInactive:        true,
+		"belum_mulai":                      true,
 	}
 
 	if !validStatuses[status] {

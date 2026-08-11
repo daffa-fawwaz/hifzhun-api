@@ -15,6 +15,10 @@ type ClassBookRepository interface {
 	IsBookAccessibleByMember(bookID, userID string) (bool, error)
 	// IsBookAccessibleByTeacher returns true when userID is the guru of any class that contains bookID.
 	IsBookAccessibleByTeacher(bookID, userID string) (bool, error)
+	// IsBookOwner returns true when userID is the owner of the book.
+	IsBookOwner(bookID, userID string) (bool, error)
+	// IsBookPublished returns true when status of the book is published.
+	IsBookPublished(bookID string) (bool, error)
 	CountByClassID(classID string) (int64, error)
 	Delete(id string) error
 	DeleteByClassID(classID string) error
@@ -83,6 +87,24 @@ func (r *classBookRepository) IsBookAccessibleByTeacher(bookID, userID string) (
 	err := r.db.Model(&entities.ClassBook{}).
 		Joins("JOIN classes ON classes.id = class_books.class_id").
 		Where("class_books.book_id = ? AND classes.guru_id = ?", bookID, userID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// IsBookOwner returns true when userID is the owner_id of the book.
+func (r *classBookRepository) IsBookOwner(bookID, userID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&entities.Book{}).
+		Where("id = ? AND owner_id = ?", bookID, userID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// IsBookPublished returns true when status of the book is published.
+func (r *classBookRepository) IsBookPublished(bookID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&entities.Book{}).
+		Where("id = ? AND status = ?", bookID, "published").
 		Count(&count).Error
 	return count > 0, err
 }

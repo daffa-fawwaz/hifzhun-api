@@ -94,8 +94,23 @@ func (s *ItemReviewService) canAccessBookItem(item *entities.Item, userID uuid.U
 		return true
 	}
 
-	allowed, err := s.classBookRepo.IsBookAccessibleByMember(bookID, userID.String())
-	return err == nil && allowed
+	isPublished, err := s.classBookRepo.IsBookPublished(bookID)
+	if err == nil && isPublished {
+		return true
+	}
+
+	isOwner, err := s.classBookRepo.IsBookOwner(bookID, userID.String())
+	if err == nil && isOwner {
+		return true
+	}
+
+	allowedMember, err := s.classBookRepo.IsBookAccessibleByMember(bookID, userID.String())
+	if err == nil && allowedMember {
+		return true
+	}
+
+	allowedTeacher, err := s.classBookRepo.IsBookAccessibleByTeacher(bookID, userID.String())
+	return err == nil && allowedTeacher
 }
 
 func (s *ItemReviewService) ReviewItem(
