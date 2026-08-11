@@ -554,48 +554,23 @@ func (s *bookService) AddPublishedBookToMyBook(userID uuid.UUID, bookID string) 
 		return nil, errors.New("book has no items")
 	}
 
-	result := &AddPublishedBookToMyBookResult{
-		BookID:           bookID,
-		AddedCount:       0,
-		SkippedCount:     0,
-		AddedContentRefs: nil,
+	isImported, err := s.classBookRepo.IsBookImportedByUser(bookID, userID.String())
+	if err == nil && isImported {
+		return &AddPublishedBookToMyBookResult{
+			BookID:       bookID,
+			AddedCount:   0,
+			SkippedCount: len(bookItems),
+		}, nil
 	}
 
-	// Create Item rows (source_type=book) for each BookItem in the published book.
-	// We prevent duplicates by checking `content_ref` for the user.
-	for _, bi := range bookItems {
-		contentRef := "book:" + bookID + ":item:" + bi.ID.String()
-
-		existingItems, err := s.itemRepo.FindByOwnerAndContentRef(userID, contentRef)
-		if err != nil {
-			return nil, err
-		}
-		if len(existingItems) > 0 {
-			result.SkippedCount++
-			continue
-		}
-
-		item := &entities.Item{
-			OwnerID:                userID,
-			SourceType:             "book",
-			ContentRef:             contentRef,
-			Status:                 "belum_mulai",
-			EstimatedReviewSeconds: bi.EstimatedReviewSeconds,
-		}
-
-		if err := s.itemRepo.Create(item); err != nil {
-			return nil, err
-		}
-
-		result.AddedCount++
-		// optional: return refs for UI debugging
-		if result.AddedContentRefs == nil {
-			result.AddedContentRefs = make([]string, 0, len(bookItems))
-		}
-		result.AddedContentRefs = append(result.AddedContentRefs, contentRef)
+	if err := s.classBookRepo.CreateImportedBook(userID.String(), bookID); err != nil {
+		return nil, err
 	}
 
-	return result, nil
+	return &AddPublishedBookToMyBookResult{
+		BookID:     bookID,
+		AddedCount: len(bookItems),
+	}, nil
 }
 
 func (s *bookService) CopyPublishedBookToDraft(
@@ -1579,20 +1554,23 @@ func (s *bookService) StartItemMemorization(userID uuid.UUID, bookID, bookItemID
 		return nil, errors.New("book not found")
 	}
 
+	isOwner := book.OwnerID == userID
+	var isClassroomMember bool
 	if s.classBookRepo != nil {
 		isClassBook, err := s.classBookRepo.IsBookAssignedToClass(bookID)
-		if err != nil {
-			return nil, err
+		if err == nil && isClassBook {
+			isClassroomMember = s.canAccessClassBook(bookID, book.OwnerID, &userID)
 		}
-		if isClassBook {
-			if !s.canAccessClassBook(bookID, book.OwnerID, &userID) {
-				return nil, errors.New("you don't have access to this book")
-			}
+	}
+	var isImporter bool
+	if s.classBookRepo != nil {
+		isImported, err := s.classBookRepo.IsBookImportedByUser(bookID, userID.String())
+		if err == nil && isImported && book.Status == entities.BookStatusPublished {
+			isImporter = true
 		}
-		if !isClassBook && book.Status != entities.BookStatusPublished && book.OwnerID != userID {
-			return nil, errors.New("you don't have access to this book")
-		}
-	} else if book.Status != entities.BookStatusPublished && book.OwnerID != userID {
+	}
+
+	if !isOwner && !isClassroomMember && !isImporter {
 		return nil, errors.New("you don't have access to this book")
 	}
 
@@ -1614,7 +1592,7 @@ func (s *bookService) StartItemMemorization(userID uuid.UUID, bookID, bookItemID
 
 		// If item exists but status is 'menghafal', update to 'start'
 		// This handles items created from AddPublishedBookToMyBook
-		if existingItem.Status == "belum_mulai" {
+		if existingItem.Status == entities.ItemStatusMenghafal {
 			existingItem.Status = entities.ItemStatusStart
 			if err := s.itemRepo.Update(existingItem); err != nil {
 				return nil, err
@@ -1665,75 +1643,59 @@ func (s *bookService) StartItemMemorization(userID uuid.UUID, bookID, bookItemID
 // ==================== MY BOOK COLLECTION ====================
 
 func (s *bookService) GetMyBookCollection(userID uuid.UUID) ([]BookCollectionItem, error) {
-	// Fetch all book items (source_type = "book")
-	items, err := s.itemRepo.FindByOwnerAndSourceType(userID, "book")
+	importedBooks, err := s.classBookRepo.FindImportedBooksByUserID(userID.String())
 	if err != nil {
 		return nil, err
 	}
 
-	if len(items) == 0 {
-		return []BookCollectionItem{}, nil
-	}
+	result := make([]BookCollectionItem, 0, len(importedBooks))
+	for _, ib := range importedBooks {
+		bookID := ib.BookID.String()
 
-	// Extract unique book IDs and track earliest added_at per book
-	bookIDMap := make(map[string]*BookCollectionItem)
-	bookOrder := make([]string, 0)
-
-	for _, item := range items {
-		// Parse content_ref: "book:BOOK_ID:item:BOOK_ITEM_ID"
-		parts := strings.Split(item.ContentRef, ":")
-		if len(parts) != 4 || parts[0] != "book" || parts[2] != "item" {
+		book, err := s.bookRepo.FindByID(bookID)
+		if err != nil {
 			continue
 		}
-		bookID := parts[1]
 
-		if _, exists := bookIDMap[bookID]; !exists {
-			// Fetch book details
-			book, err := s.bookRepo.FindByID(bookID)
-			if err != nil {
-				continue // Skip if book not found
-			}
-
-			// Fetch owner name
-			ownerName := ""
-			owner, err := s.userRepo.FindByID(book.OwnerID.String())
-			if err == nil && owner != nil {
-				ownerName = owner.FullName
-			}
-
-			bookIDMap[bookID] = &BookCollectionItem{
-				BookID:      bookID,
-				Title:       book.Title,
-				Description: book.Description,
-				CoverImage:  book.CoverImage,
-				OwnerName:   ownerName,
-				ItemCount:   0,
-				AddedAt:     item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			}
-			bookOrder = append(bookOrder, bookID)
+		ownerName := ""
+		owner, err := s.userRepo.FindByID(book.OwnerID.String())
+		if err == nil && owner != nil {
+			ownerName = owner.FullName
 		}
 
-		bookIDMap[bookID].ItemCount++
-	}
+		items, err := s.itemRepo.FindByOwnerAndSourceType(userID, "book")
+		itemCount := 0
+		if err == nil {
+			for _, item := range items {
+				parts := strings.Split(item.ContentRef, ":")
+				if len(parts) == 4 && parts[0] == "book" && parts[1] == bookID {
+					itemCount++
+				}
+			}
+		}
 
-	// Build result in order
-	result := make([]BookCollectionItem, 0, len(bookOrder))
-	for _, bookID := range bookOrder {
-		result = append(result, *bookIDMap[bookID])
+		result = append(result, BookCollectionItem{
+			BookID:      bookID,
+			Title:       book.Title,
+			Description: book.Description,
+			CoverImage:  book.CoverImage,
+			OwnerName:   ownerName,
+			ItemCount:   itemCount,
+			AddedAt:     ib.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
 	}
 
 	return result, nil
 }
 
 func (s *bookService) RemoveFromMyBookCollection(userID uuid.UUID, bookID string) error {
-	// Verify book exists
 	_, err := s.bookRepo.FindByID(bookID)
 	if err != nil {
 		return errors.New("book not found")
 	}
 
-	// Delete all items with content_ref starting with "book:BOOK_ID:"
-	// We need to fetch items first to delete them
+	_ = s.classBookRepo.DeleteImportedBook(userID.String(), bookID)
+
 	items, err := s.itemRepo.FindByOwnerAndSourceType(userID, "book")
 	if err != nil {
 		return err
