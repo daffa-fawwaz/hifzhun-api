@@ -326,6 +326,8 @@ func (s *ItemStatusService) ActivateToFSRS(itemID uuid.UUID, userID uuid.UUID) (
 	// For book items: allow activation from 'start' or 'menghafal' status
 	if item.SourceType == "book" && (item.Status == entities.ItemStatusStart || item.Status == entities.ItemStatusMenghafal) {
 		// Book items can activate to FSRS directly
+	} else if item.SourceType == "quran" && (item.Status == entities.ItemStatusMenghafal || item.Status == entities.ItemStatusInterval) {
+		// Quran items can activate to FSRS directly from 'menghafal' or legacy 'interval' status
 	} else if item.Status != entities.ItemStatusInterval {
 		return nil, errors.New("item must be in 'interval' status to activate FSRS")
 	}
