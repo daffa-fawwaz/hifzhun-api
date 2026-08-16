@@ -115,6 +115,9 @@ type StudentBookProgress struct {
 	PendingGraduate int       `json:"pending_graduate"`
 	Graduate        int       `json:"graduate"`
 	Inactive        int       `json:"inactive"`
+	TotalUnreviewed int       `json:"total_unreviewed"`
+	TotalFSRSActive int       `json:"total_fsrs_active"`
+	TotalInactive   int       `json:"total_inactive"`
 	// AverageStability divides total review-interval days by every item in the
 	// book. Unstarted items contribute zero, making it a completion-aware value.
 	AverageStability        float64                   `json:"average_stability"`
@@ -800,6 +803,10 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 				NextReviewAt:       item.NextReviewAt,
 			})
 		}
+
+		student.TotalUnreviewed = student.Start + student.Menghafal + student.Interval
+		student.TotalFSRSActive = student.FSRSActive
+		student.TotalInactive = student.Inactive
 
 		if result.TotalBookItems > 0 {
 			student.AverageStability = math.Round((stabilityTotal/float64(result.TotalBookItems))*100) / 100
