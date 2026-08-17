@@ -26,12 +26,13 @@ func nextReviewFor(item entities.Item) *time.Time {
 // ==================== Response Types ====================
 
 type MyItemDetail struct {
-	ItemID      uuid.UUID  `json:"item_id"`
-	ContentRef  string     `json:"content_ref"`
-	Status      string     `json:"status"`
-	ReviewCount int        `json:"review_count"`
-	NextReview  *time.Time `json:"next_review"`
-	CreatedAt   string     `json:"created_at"`
+	ItemID       uuid.UUID  `json:"item_id"`
+	ContentRef   string     `json:"content_ref"`
+	Status       string     `json:"status"`
+	ReviewCount  int        `json:"review_count"`
+	NextReview   *time.Time `json:"next_review,omitempty"`
+	NextReviewAt *time.Time `json:"next_review_at,omitempty"`
+	CreatedAt    string     `json:"created_at"`
 }
 
 type QuranItemDetail struct {
@@ -143,14 +144,16 @@ func (s *MyItemService) GetMyQuranItems(userID uuid.UUID, classID string) (*MyIt
 			juzOrder = append(juzOrder, info.JuzID)
 		}
 
+		nextRev := nextReviewFor(item)
 		juzGroupMap[info.JuzID].Items = append(juzGroupMap[info.JuzID].Items, QuranItemDetail{
 			MyItemDetail: MyItemDetail{
-				ItemID:      item.ID,
-				ContentRef:  item.ContentRef,
-				Status:      item.Status,
-				ReviewCount: item.ReviewCount,
-				NextReview:  nextReviewFor(item),
-				CreatedAt:   item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+				ItemID:       item.ID,
+				ContentRef:   item.ContentRef,
+				Status:       item.Status,
+				ReviewCount:  item.ReviewCount,
+				NextReview:   nextRev,
+				NextReviewAt: nextRev,
+				CreatedAt:    item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			},
 		})
 	}
@@ -257,14 +260,16 @@ func (s *MyItemService) GetMyBookItems(userID uuid.UUID) (*MyItemsBookResponse, 
 			}
 		}
 
+		nextRev := nextReviewFor(item)
 		bookGroupMap[ref.BookID].Items = append(bookGroupMap[ref.BookID].Items, BookItemDetail{
 			MyItemDetail: MyItemDetail{
-				ItemID:      item.ID,
-				ContentRef:  item.ContentRef,
-				Status:      item.Status,
-				ReviewCount: item.ReviewCount,
-				NextReview:  nextReviewFor(item),
-				CreatedAt:   item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+				ItemID:       item.ID,
+				ContentRef:   item.ContentRef,
+				Status:       item.Status,
+				ReviewCount:  item.ReviewCount,
+				NextReview:   nextRev,
+				NextReviewAt: nextRev,
+				CreatedAt:    item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			},
 			BookItemTitle: resolvedTitle,
 		})

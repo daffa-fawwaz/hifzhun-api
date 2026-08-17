@@ -152,7 +152,7 @@ func main() {
 	itemStatusHandler := handlers.NewItemStatusHandler(itemStatusSvc, juzItemRepo, bookRepo, bookItemRepo, itemRepo, bookItemOverrideRepo, appCache)
 
 	// ================= CLASS =================
-	classSvc := services.NewClassService(classRepo, classMemberRepo, classBookRepo, bookRepo, userRepo, itemRepo, juzRepo, juzItemRepo)
+	classSvc := services.NewClassService(classRepo, classMemberRepo, classBookRepo, bookRepo, userRepo, itemRepo, juzRepo, juzItemRepo, dailyTaskRepo, dailyTaskSvc)
 	classHandler := handlers.NewClassHandler(classSvc)
 
 	// ================= ITEM REVIEW =================
