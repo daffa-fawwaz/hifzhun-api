@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -182,6 +183,8 @@ type classService struct {
 	itemRepo        *repositories.ItemRepository
 	juzRepo         *repositories.JuzRepository
 	juzItemRepo     *repositories.JuzItemRepository
+	dailyTaskRepo   repositories.DailyTaskRepository
+	dailyTaskSvc    DailyTaskService
 }
 
 // calculateItemStability returns the interval in days between last_review_at and next_review_at.
@@ -310,6 +313,8 @@ func NewClassService(
 	itemRepo *repositories.ItemRepository,
 	juzRepo *repositories.JuzRepository,
 	juzItemRepo *repositories.JuzItemRepository,
+	dailyTaskRepo repositories.DailyTaskRepository,
+	dailyTaskSvc DailyTaskService,
 ) ClassService {
 	return &classService{
 		classRepo:       classRepo,
@@ -320,6 +325,8 @@ func NewClassService(
 		itemRepo:        itemRepo,
 		juzRepo:         juzRepo,
 		juzItemRepo:     juzItemRepo,
+		dailyTaskRepo:   dailyTaskRepo,
+		dailyTaskSvc:    dailyTaskSvc,
 	}
 }
 
@@ -731,6 +738,9 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 		Students:       make([]StudentBookProgress, 0, len(members)),
 	}
 
+	now := time.Now().In(config.AppLocation)
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
+
 	for _, member := range members {
 		user, err := s.userRepo.FindByID(member.UserID.String())
 		if err != nil {
@@ -742,6 +752,18 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 			return nil, err
 		}
 
+		// Fetch or generate student's daily tasks snapshot for today
+		dailyTaskState := make(map[uuid.UUID]string)
+		if s.dailyTaskRepo != nil {
+			tasks, err := s.dailyTaskRepo.ListByUserAndDate(context.Background(), member.UserID, now)
+			if err == nil && len(tasks) == 0 && s.dailyTaskSvc != nil {
+				tasks, _ = s.dailyTaskSvc.GenerateToday(context.Background(), member.UserID, now, 0)
+			}
+			for _, t := range tasks {
+				dailyTaskState[t.ItemID] = t.State
+			}
+		}
+
 		student := StudentBookProgress{
 			UserID:   member.UserID,
 			Email:    user.Email,
@@ -750,6 +772,9 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 		}
 		stabilityTotal := 0.0
 		startedStabilityCount := 0
+		totalUnreviewed := 0
+		totalFsrsActive := 0
+		totalInactive := 0
 
 		for _, item := range items {
 			_, bookItemID, ok := strings.Cut(item.ContentRef, "book:"+bookID+":item:")
@@ -783,6 +808,21 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 				student.Inactive++
 			}
 
+			if item.Status == entities.ItemStatusInactive {
+				totalInactive++
+			} else {
+				taskState, hasTask := dailyTaskState[item.ID]
+				isTaskCompleted := hasTask && (taskState == "done" || taskState == "completed")
+				isDue := item.NextReviewAt == nil || !item.NextReviewAt.After(endOfDay) || (item.IntervalNextReviewAt != nil && !item.IntervalNextReviewAt.After(endOfDay))
+
+				// Outstanding review obligation for today
+				if (hasTask && !isTaskCompleted) || (isDue && !isTaskCompleted) || item.Status == entities.ItemStatusStart || item.Status == entities.ItemStatusMenghafal {
+					totalUnreviewed++
+				} else {
+					totalFsrsActive++
+				}
+			}
+
 			stability := calculateItemStability(&item)
 			var reviewIntervalDays *float64
 			if days, valid := itemStabilityDays(&item); valid {
@@ -804,9 +844,9 @@ func (s *classService) GetClassBookStudentProgress(classID, bookID string, teach
 			})
 		}
 
-		student.TotalUnreviewed = student.Start + student.Menghafal + student.Interval
-		student.TotalFSRSActive = student.FSRSActive
-		student.TotalInactive = student.Inactive
+		student.TotalUnreviewed = totalUnreviewed
+		student.TotalFSRSActive = totalFsrsActive
+		student.TotalInactive = totalInactive
 
 		if result.TotalBookItems > 0 {
 			student.AverageStability = math.Round((stabilityTotal/float64(result.TotalBookItems))*100) / 100
