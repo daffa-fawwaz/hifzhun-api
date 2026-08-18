@@ -141,7 +141,20 @@ func (s *ItemReviewService) ReviewItem(
 		return nil, errors.New("you don't have access to this book item")
 	}
 
-	// 3. Validate status - must be fsrs_active or graduate (for periodic review)
+	// 3. Normalize legacy 'interval' status for quran items to 'fsrs_active'
+	if item.SourceType == "quran" && item.Status == entities.ItemStatusInterval {
+		item.Status = entities.ItemStatusFSRSActive
+		item.IntervalEndAt = &now
+		if item.FSRSStartAt == nil {
+			if item.IntervalStartAt != nil {
+				item.FSRSStartAt = item.IntervalStartAt
+			} else {
+				item.FSRSStartAt = &now
+			}
+		}
+	}
+
+	// Validate status - must be fsrs_active or graduate (for periodic review)
 	// For book items: can also be 'start' or 'menghafal'
 	if item.Status != entities.ItemStatusFSRSActive && item.Status != entities.ItemStatusGraduate {
 		if item.SourceType != "book" || (item.Status != entities.ItemStatusStart && item.Status != entities.ItemStatusMenghafal) {
@@ -265,13 +278,15 @@ func (s *ItemReviewService) ReviewItem(
 
 	// 15. Mark daily task as done (ignore error if not found)
 	taskDate := utils.NormalizeDate(now)
-	_ = s.dailyTaskActionRepo.UpdateStateByItemID(
-		context.Background(),
-		userID,
-		taskDate,
-		itemID,
-		"done",
-	)
+	if s.dailyTaskActionRepo != nil {
+		_ = s.dailyTaskActionRepo.UpdateStateByItemID(
+			context.Background(),
+			userID,
+			taskDate,
+			itemID,
+			"done",
+		)
+	}
 
 	return &ItemReviewResult{
 		Item:            item,
