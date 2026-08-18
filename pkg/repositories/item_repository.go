@@ -60,8 +60,9 @@ func (r *ItemRepository) FindIntervalDeadlineReached(now time.Time) ([]entities.
 // FindIntervalReviewDue finds items with status=interval and interval_next_review_at <= now
 func (r *ItemRepository) FindIntervalReviewDue(ownerID uuid.UUID, now time.Time) ([]entities.Item, error) {
 	var items []entities.Item
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
 	err := r.db.
-		Where("owner_id = ? AND status = ? AND interval_next_review_at <= ?", ownerID, entities.ItemStatusInterval, now).
+		Where("owner_id = ? AND status = ? AND interval_next_review_at <= ?", ownerID, entities.ItemStatusInterval, endOfDay).
 		Find(&items).Error
 	return items, err
 }

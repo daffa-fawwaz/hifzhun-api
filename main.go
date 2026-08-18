@@ -64,7 +64,7 @@ func main() {
 	})
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:5173,https://unlupa.id,https://www.unlupa.id,https://api.unlupa.id",
+		AllowOrigins:     "http://localhost:5173,http://localhost:5174,https://unlupa.id,https://www.unlupa.id,https://api.unlupa.id",
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowCredentials: true,
