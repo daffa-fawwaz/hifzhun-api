@@ -45,11 +45,14 @@ func (r *reviewStateRepository) FindDueByUser(
 	var states []entities.ReviewState
 
 	q := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Where("state = ?", "active").
-		Where("next_review_at IS NOT NULL").
-		Where("next_review_at <= ?", now).
-		Order("next_review_at ASC, stability ASC")
+		Table("review_states").
+		Select("review_states.*").
+		Joins("JOIN items ON items.id = review_states.item_id").
+		Where("review_states.user_id = ?", userID).
+		Where("review_states.state = ?", "active").
+		Where("review_states.next_review_at IS NOT NULL").
+		Where("review_states.next_review_at <= ?", now).
+		Order("review_states.next_review_at ASC, review_states.stability ASC")
 
 	if limit > 0 {
 		q = q.Limit(limit)
