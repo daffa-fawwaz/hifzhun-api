@@ -29,13 +29,93 @@ func (r *ItemRepository) GetByID(id uuid.UUID) (*entities.Item, error) {
 }
 
 func (r *ItemRepository) DeleteByID(id uuid.UUID) error {
-	return r.db.Where("id = ?", id).Delete(&entities.Item{}).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("item_id = ?", id).Delete(&entities.DailyTask{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.ReviewState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.Card{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.JuzItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.FSRSState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.ItemState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", id).Delete(&entities.Item{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *ItemRepository) DeleteItemWithActiveState(id uuid.UUID, ownerID uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ? AND item_id = ?", ownerID, id).Delete(&entities.DailyTask{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ? AND item_id = ?", ownerID, id).Delete(&entities.ReviewState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("owner_id = ? AND item_id = ?", ownerID, id).Delete(&entities.Card{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.JuzItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.FSRSState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id = ?", id).Delete(&entities.ItemState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ? AND owner_id = ?", id, ownerID).Delete(&entities.Item{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *ItemRepository) DeleteBookItemsByBookID(bookID string) error {
-	return r.db.
-		Where("source_type = ? AND content_ref LIKE ?", "book", "book:"+bookID+":%").
-		Delete(&entities.Item{}).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var items []entities.Item
+		if err := tx.Where("source_type = ? AND content_ref LIKE ?", "book", "book:"+bookID+":%").Find(&items).Error; err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		itemIDs := make([]uuid.UUID, len(items))
+		for i, item := range items {
+			itemIDs[i] = item.ID
+		}
+
+		if err := tx.Where("item_id IN ?", itemIDs).Delete(&entities.DailyTask{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id IN ?", itemIDs).Delete(&entities.ReviewState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id IN ?", itemIDs).Delete(&entities.Card{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id IN ?", itemIDs).Delete(&entities.FSRSState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("item_id IN ?", itemIDs).Delete(&entities.ItemState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id IN ?", itemIDs).Delete(&entities.Item{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *ItemRepository) FindByOwnerAndStatus(ownerID uuid.UUID, status string) ([]entities.Item, error) {

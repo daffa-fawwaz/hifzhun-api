@@ -237,13 +237,19 @@ func (h *ClassDailyHandler) ListClassDaily(c *fiber.Ctx) error {
 	// ── 9. Build response ─────────────────────────────────────────────────────
 	resp := make([]DailyTaskResponse, 0, len(filtered))
 	for _, t := range filtered {
+		status, itemExists := itemStatusMap[t.ItemID]
+		contentRef, contentExists := itemContentMap[t.ItemID]
+		if !itemExists || !contentExists || status == "" || contentRef == "" {
+			continue
+		}
+
 		resp = append(resp, DailyTaskResponse{
 			ItemID:                 t.ItemID,
 			Source:                 t.Source,
 			State:                  t.State,
-			Status:                 itemStatusMap[t.ItemID],
+			Status:                 status,
 			TaskDate:               t.TaskDate.Format("2006-01-02"),
-			ContentRef:             itemContentMap[t.ItemID],
+			ContentRef:             contentRef,
 			JuzIndex:               juzIndexMap[t.ItemID.String()],
 			EstimatedReviewSeconds: itemEstimateMap[t.ItemID],
 		})
@@ -535,13 +541,19 @@ func (h *ClassDailyHandler) ListClassDailyBook(c *fiber.Ctx) error {
 	// ── 10. Build response ────────────────────────────────────────────────────
 	resp := make([]DailyTaskResponse, 0, len(filtered))
 	for _, t := range filtered {
+		status, itemExists := itemStatusMap[t.ItemID]
+		contentRef, contentExists := itemContentMap[t.ItemID]
+		if !itemExists || !contentExists || status == "" || contentRef == "" {
+			continue
+		}
+
 		resp = append(resp, DailyTaskResponse{
 			ItemID:                 t.ItemID,
 			Source:                 t.Source,
 			State:                  t.State,
-			Status:                 itemStatusMap[t.ItemID],
+			Status:                 status,
 			TaskDate:               t.TaskDate.Format("2006-01-02"),
-			ContentRef:             itemContentMap[t.ItemID],
+			ContentRef:             contentRef,
 			JuzIndex:               0, // Book items don't have juz_index
 			EstimatedReviewSeconds: itemEstimateMap[t.ItemID],
 			BookTitle:              bookTitleByItem[t.ItemID],

@@ -358,6 +358,12 @@ func (h *DailyTaskHandler) ListToday(c *fiber.Ctx) error {
 
 	resp := make([]DailyTaskResponse, 0, len(tasks))
 	for _, t := range tasks {
+		status, itemExists := itemStatusMap[t.ItemID]
+		contentRef, contentExists := itemMap[t.ItemID]
+		if !itemExists || !contentExists || status == "" || contentRef == "" {
+			continue
+		}
+
 		// Filter out quran items that belong to a class (so they don't appear in personal daily tasks)
 		if isQuranSource(t.Source) && classScopeMap[t.ItemID.String()] {
 			continue
@@ -367,9 +373,9 @@ func (h *DailyTaskHandler) ListToday(c *fiber.Ctx) error {
 			ItemID:                 t.ItemID,
 			Source:                 t.Source,
 			State:                  t.State,
-			Status:                 itemStatusMap[t.ItemID],
+			Status:                 status,
 			TaskDate:               t.TaskDate.Format("2006-01-02"),
-			ContentRef:             itemMap[t.ItemID],
+			ContentRef:             contentRef,
 			JuzIndex:               juzMap[t.ItemID.String()],
 			EstimatedReviewSeconds: itemEstimateMap[t.ItemID],
 			BookTitle:              bookTitleByItem[t.ItemID],

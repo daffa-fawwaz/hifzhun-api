@@ -137,13 +137,14 @@ func (h *JuzItemHandler) Delete(c *fiber.Ctx) error {
 		return utils.Error(c, fiber.StatusBadRequest, "Item not found or not quran", "ITEM_NOT_FOUND", nil)
 	}
 
-	_ = h.juzItemRepo.DeleteByItemID(itemID.String())
-	if err := h.itemRepo.DeleteByID(itemID); err != nil {
+	if err := h.itemRepo.DeleteItemWithActiveState(itemID, userID); err != nil {
 		return utils.Error(c, fiber.StatusInternalServerError, err.Error(), "DELETE_FAILED", nil)
 	}
 
 	ctx := c.Context()
 	h.cache.DeleteByPattern(ctx, fmt.Sprintf("myitems:%s:*", userID.String()))
 	h.cache.DeleteByPattern(ctx, fmt.Sprintf("juz:list:%s:*", userID.String()))
+	h.cache.DeleteByPattern(ctx, fmt.Sprintf("daily:%s:*", userID.String()))
+	h.cache.DeleteByPattern(ctx, fmt.Sprintf("class-daily:%s:*", userID.String()))
 	return utils.Success(c, fiber.StatusOK, "Hafalan deleted successfully", nil, nil)
 }
